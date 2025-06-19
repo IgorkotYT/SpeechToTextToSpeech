@@ -175,10 +175,20 @@ class App(QtWidgets.QWidget):
         g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0); self.tts_cb=QtWidgets.QComboBox(); self.tts_cb.addItems(['pyttsx3','espeak','sam']); g.addWidget(self.tts_cb,r,1);
         g.addWidget(QtWidgets.QLabel('TTS Voice:'),r,2); self.voice_cb=QtWidgets.QComboBox(); g.addWidget(self.voice_cb,r,3); r+=1
         # Sliders
-        def add_slider(label,attr,row):
-            g.addWidget(QtWidgets.QLabel(label),row,0); sl=QtWidgets.QSlider(QtCore.Qt.Horizontal);
-            sl.setValue(self.cfg[attr]); sl.setRange(0,100 if attr.endswith('vol') else 2000 if attr=='pitch' else 1000)
-            g.addWidget(sl,row,1,1,3); return sl
+        def add_slider(label, attr, row):
+            g.addWidget(QtWidgets.QLabel(label), row, 0)
+            sl = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            if attr in ('stt_gain', 'tempo'):
+                sl.factor = 100
+                sl.setRange(0, 200)
+                sl.setValue(int(self.cfg[attr] * sl.factor))
+            else:
+                sl.factor = 1
+                max_val = 100 if attr.endswith('vol') else 2000 if attr == 'pitch' else 1000
+                sl.setRange(0, max_val)
+                sl.setValue(int(self.cfg[attr]))
+            g.addWidget(sl, row, 1, 1, 3)
+            return sl
         self.gain_sl   = add_slider('STT Gain%',   'stt_gain',  r); r+=1
         self.vol_sl    = add_slider('TTS Vol%',    'tts_vol',   r); r+=1
         self.words_sl  = add_slider('Words Threshold','words_chunk',r); r+=1
@@ -232,7 +242,7 @@ class App(QtWidgets.QWidget):
         if isinstance(widget, QtWidgets.QCheckBox):
             val = widget.isChecked()
         elif isinstance(widget, QtWidgets.QSlider):
-            val = widget.value()
+            val = widget.value() / getattr(widget, 'factor', 1)
         elif isinstance(widget, QtWidgets.QLineEdit):
             val = widget.text()
         elif isinstance(widget, QtWidgets.QComboBox):
