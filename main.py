@@ -175,18 +175,31 @@ class App(QtWidgets.QWidget):
         g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0); self.tts_cb=QtWidgets.QComboBox(); self.tts_cb.addItems(['pyttsx3','espeak','sam']); g.addWidget(self.tts_cb,r,1);
         g.addWidget(QtWidgets.QLabel('TTS Voice:'),r,2); self.voice_cb=QtWidgets.QComboBox(); g.addWidget(self.voice_cb,r,3); r+=1
         # Sliders
-        def add_slider(label,attr,row):
-            g.addWidget(QtWidgets.QLabel(label),row,0); sl=QtWidgets.QSlider(QtCore.Qt.Horizontal);
-            sl.setValue(self.cfg[attr]); sl.setRange(0,100 if attr.endswith('vol') else 2000 if attr=='pitch' else 1000)
-            g.addWidget(sl,row,1,1,3); return sl
+        def add_slider(label, attr, row):
+            g.addWidget(QtWidgets.QLabel(label), row, 0)
+            sl = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+            if attr in ('stt_gain', 'tempo'):
+                sl.factor = 100
+                sl.setRange(0, 200)
+                sl.setValue(int(self.cfg[attr] * sl.factor))
+            else:
+                sl.factor = 1
+                max_val = 100 if attr.endswith('vol') else 2000 if attr == 'pitch' else 1000
+                sl.setRange(0, max_val)
+                sl.setValue(int(self.cfg[attr]))
+            g.addWidget(sl, row, 1, 1, 3)
+            return sl
         self.gain_sl   = add_slider('STT Gain%',   'stt_gain',  r); r+=1
         self.vol_sl    = add_slider('TTS Vol%',    'tts_vol',   r); r+=1
         self.words_sl  = add_slider('Words Threshold','words_chunk',r); r+=1
         self.chunk_sl  = add_slider('Chunk ms',    'chunk_ms',  r); r+=1
         self.pitch_sl  = add_slider('Pitch cents', 'pitch',     r); r+=1
         self.tempo_sl  = add_slider('Tempo %',     'tempo',     r); r+=1
-        self.filter_cb = QtWidgets.QComboBox(); self.filter_cb.addItems(['none','lowpass','highpass']);
+        self.filter_cb = QtWidgets.QComboBox(); self.filter_cb.addItems(['none','lowpass','highpass'])
         g.addWidget(QtWidgets.QLabel('Filter:'),r,0); g.addWidget(self.filter_cb,r,1,1,3); r+=1
+        # level meter
+        self.level_pb = QtWidgets.QProgressBar(); self.level_pb.setRange(0,100)
+        g.addWidget(QtWidgets.QLabel('Input Level:'),r,0); g.addWidget(self.level_pb,r,1,1,3); r+=1
         # Controls
         self.start_btn = QtWidgets.QPushButton('Start')
         self.stop_btn  = QtWidgets.QPushButton('Stop')
@@ -196,7 +209,9 @@ class App(QtWidgets.QWidget):
         self.log_te    = QtWidgets.QPlainTextEdit(); self.log_te.setReadOnly(True)
         g.addWidget(self.log_te,r,0,3,4); r+=3
         self.export_btn= QtWidgets.QPushButton('Export Transcript')
-        g.addWidget(self.export_btn,r,0,1,4)
+        g.addWidget(self.export_btn,r,0,1,3)
+        self.tts_input = QtWidgets.QLineEdit(); self.speak_btn = QtWidgets.QPushButton('Speak')
+        g.addWidget(self.tts_input,r,1,1,2); g.addWidget(self.speak_btn,r,3,1,1); r+=1
 
     def _populate_voices(self):
         t=pyttsx3.init();
@@ -207,18 +222,105 @@ class App(QtWidgets.QWidget):
     def _connect_signals(self):
         QtWidgets.QShortcut(QtGui.QKeySequence('Ctrl+B'), self).activated.connect(self._toggle_bypass)
         self.start_btn.clicked.connect(self._start)
-        self.stop_btn .clicked.connect(self._stop)
+        self.stop_btn.clicked.connect(self._stop)
         self.export_btn.clicked.connect(self._export)
+        self.speak_btn.clicked.connect(self._speak_manual)
         # track config changes
         widgets = [ (self.loop_chk,'listen_self'), (self.stt_cb,'stt_engine'), (self.model_le,'model_path'),
                     (self.tts_cb,'tts_engine'),(self.voice_cb,'tts_voice'),(self.gain_sl,'stt_gain'),
                     (self.vol_sl,'tts_vol'),(self.words_sl,'words_chunk'),(self.chunk_sl,'chunk_ms'),
-                    (self.pitch_sl,'pitch'),(self.tempo_sl,'tempo'),(self.filter_cb,'filter') ]
+                    (self.pitch_sl,'pitch'),(self.tempo_sl,'tempo'),(self.filter_cb,'filter'),
+                    (self.in_cb,'in_dev'),(self.out_cb,'out_dev') ]
         for w,key in widgets:
             sig = w.currentIndexChanged if isinstance(w,QtWidgets.QComboBox) else w.valueChanged if isinstance(w,QtWidgets.QSlider) else w.stateChanged if isinstance(w,QtWidgets.QCheckBox) else w.editingFinished
-            sig.connect(lambda _,k=key,w=w: self._update_cfg(k))
+            sig.connect(lambda _,k=key,w=w: self._update_cfg(k,w))
         self.log_te.clear()
 
-    def _update_cfg(self,key):
-        val = self.loop_chk.isChecked() if key=='listen_self' else\
+    def _update_cfg(self,key, widget=None):
+        if widget is None:
+            return
+        if isinstance(widget, QtWidgets.QCheckBox):
+            val = widget.isChecked()
+        elif isinstance(widget, QtWidgets.QSlider):
+            val = widget.value() / getattr(widget, 'factor', 1)
+        elif isinstance(widget, QtWidgets.QLineEdit):
+            val = widget.text()
+        elif isinstance(widget, QtWidgets.QComboBox):
+            val = widget.currentData() if widget.currentData() is not None else widget.currentText()
+        else:
+            val = None
+        self.cfg[key] = val
+        self._save_config()
+
+    def _refresh_devices(self):
+        devs = sd.query_devices()
+        self.in_cb.blockSignals(True); self.out_cb.blockSignals(True)
+        self.in_cb.clear(); self.out_cb.clear()
+        self.in_cb.addItem('Default', None)
+        self.out_cb.addItem('Default', None)
+        for i,d in enumerate(devs):
+            if d['max_input_channels']>0:
+                self.in_cb.addItem(f"{i}: {d['name']}", i)
+            if d['max_output_channels']>0:
+                self.out_cb.addItem(f"{i}: {d['name']}", i)
+        self.in_cb.setCurrentIndex(max(0,self.in_cb.findData(self.cfg.get('in_dev'))))
+        self.out_cb.setCurrentIndex(max(0,self.out_cb.findData(self.cfg.get('out_dev'))))
+        self.in_cb.blockSignals(False); self.out_cb.blockSignals(False)
+
+    def _toggle_bypass(self):
+        self.cfg['bypass'] = not self.cfg.get('bypass', False)
+        self.bypass_btn.setText('Bypass ON' if self.cfg['bypass'] else 'Toggle Bypass (Ctrl+B)')
+        self._save_config()
+
+    def _start(self):
+        if self.thread is not None:
+            return
+        self.thread = SpeechThread(self.cfg.copy())
+        self.thread.new_text.connect(self._on_new_text)
+        self.thread.level.connect(self.level_pb.setValue)
+        self.thread.latency.connect(self._on_latency)
+        self.thread.start()
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+
+    def _stop(self):
+        if not self.thread:
+            return
+        self.thread.running = False
+        self.thread.wait()
+        self.thread = None
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+
+    def _export(self):
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save Transcript', 'transcript.txt', 'Text Files (*.txt)')
+        if fn:
+            open(fn,'w',encoding='utf8').write(self.log_te.toPlainText())
+
+    def _speak_manual(self):
+        txt = self.tts_input.text().strip()
+        if txt:
+            self.thread._speak(txt) if self.thread else SpeechThread(self.cfg)._speak(txt)
+
+    def _on_new_text(self, text):
+        self._append_log(text)
+
+    def _on_latency(self, ms):
+        self._append_log(f"[latency {ms:.0f} ms]")
+
+    def _append_log(self, txt):
+        self.log_te.appendPlainText(txt)
+
+    def closeEvent(self, e):
+        self._stop()
+        self._save_config()
+        super().closeEvent(e)
+
+
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    window = App()
+    window.show()
+    sys.exit(app.exec_())
+
 
