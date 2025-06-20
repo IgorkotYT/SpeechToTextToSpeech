@@ -63,16 +63,20 @@ class SpeechThread(QtCore.QThread):
     def _init_tts(self):
         self.sox_ok = shutil.which('sox') is not None
         eng = self.cfg['tts_engine']
-        if eng=='pyttsx3':
-            self.tts = pyttsx3.init()
-            self.tts.setProperty('rate',180)
-            self.tts.setProperty('volume', self.cfg['tts_vol']/100)
+        if eng == 'pyttsx3':
+            try:
+                self.tts = pyttsx3.init()
+            except Exception:
+                self.cfg['tts_engine'] = 'espeak'
+                return self._init_tts()
+            self.tts.setProperty('rate', 180)
+            self.tts.setProperty('volume', self.cfg['tts_vol'] / 100)
             if self.cfg['tts_voice']:
                 self.tts.setProperty('voice', self.cfg['tts_voice'])
         elif shutil.which(eng) is None:
-            self.cfg['tts_engine']='pyttsx3'
+            self.cfg['tts_engine'] = 'pyttsx3'
             self._init_tts()
-
+        
     def run(self):
         q = queue.Queue()
         block = int(self.rate * self.cfg['chunk_ms']/1000)
@@ -154,7 +158,7 @@ class App(QtWidgets.QWidget):
         return {
             'in_dev':None,'out_dev':None,'listen_self':False,
             'stt_engine':'Whisper','model_path':'model','stt_gain':1.0,
-            'tts_engine':'pyttsx3','tts_voice':'','tts_vol':100,
+            'tts_engine':'espeak','tts_voice':'','tts_vol':100,
             'words_chunk':5,'chunk_ms':500,'pitch':0,'tempo':1,'filter':'none',
             'bypass':False
         }
@@ -172,7 +176,11 @@ class App(QtWidgets.QWidget):
         # STT/TTS
         g.addWidget(QtWidgets.QLabel('STT Engine:'),r,0); self.stt_cb=QtWidgets.QComboBox(); self.stt_cb.addItems(['Whisper','Vosk','Silero']); g.addWidget(self.stt_cb,r,1);
         g.addWidget(QtWidgets.QLabel('Model path:'),r,2); self.model_le=QtWidgets.QLineEdit(self.cfg['model_path']); g.addWidget(self.model_le,r,3); r+=1
-        g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0); self.tts_cb=QtWidgets.QComboBox(); self.tts_cb.addItems(['pyttsx3','espeak','sam']); g.addWidget(self.tts_cb,r,1);
+        g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0);
+        self.tts_cb=QtWidgets.QComboBox();
+        self.tts_cb.addItems(['pyttsx3','espeak','sam']);
+        self.tts_cb.setCurrentText(self.cfg['tts_engine']);
+        g.addWidget(self.tts_cb,r,1);
         g.addWidget(QtWidgets.QLabel('TTS Voice:'),r,2); self.voice_cb=QtWidgets.QComboBox(); g.addWidget(self.voice_cb,r,3); r+=1
         # Sliders
         def add_slider(label, attr, row):
@@ -214,10 +222,16 @@ class App(QtWidgets.QWidget):
         g.addWidget(self.tts_input,r,1,1,2); g.addWidget(self.speak_btn,r,3,1,1); r+=1
 
     def _populate_voices(self):
-        t=pyttsx3.init();
+        try:
+            t = pyttsx3.init()
+        except Exception:
+            self.cfg['tts_engine'] = 'espeak'
+            self.tts_cb.setCurrentText('espeak')
+            return
         for v in t.getProperty('voices'):
             self.voice_cb.addItem(v.name, v.id)
-        self.voice_cb.setCurrentIndex(self.voice_cb.findData(self.cfg['tts_voice']))
+        idx = self.voice_cb.findData(self.cfg['tts_voice'])
+        self.voice_cb.setCurrentIndex(max(0, idx))
 
     def _connect_signals(self):
         QtWidgets.QShortcut(QtGui.QKeySequence('Ctrl+B'), self).activated.connect(self._toggle_bypass)
