@@ -15,8 +15,6 @@ try:
 except:
     pass
 
-
-
 # GUI ---------------------------------------------------------------------------
 class App(QtWidgets.QWidget):
     def __init__(self):
@@ -36,7 +34,7 @@ class App(QtWidgets.QWidget):
         return {
             'in_dev':None,'out_dev':None,'listen_self':False,
             'stt_engine':'Whisper','model_path':'model','stt_gain':1.0,
-            'tts_engine':'pyttsx3','tts_voice':'','tts_vol':100,
+            'tts_engine':'espeak','tts_voice':'','tts_vol':100,
             'words_chunk':5,'chunk_ms':500,'pitch':0,'tempo':1,'filter':'none',
             'bypass':False
         }
@@ -108,6 +106,7 @@ class App(QtWidgets.QWidget):
             for d in os.listdir(base):
                 if d.startswith('.') or d.startswith('__'):
                     continue
+
                 p = os.path.join(base, d)
                 if os.path.isdir(p):
                     dirs.append(os.path.abspath(p))
