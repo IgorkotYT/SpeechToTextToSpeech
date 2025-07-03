@@ -1,28 +1,21 @@
 # TTS-Only Bot – Full Featured GUI (Dark Theme)
 # Whisper / Vosk / Silero STT, pyttsx3/espeak/sam TTS, SoX FX, config, export, bypass
 
-import sys, os, json, queue, subprocess, tempfile, shutil, time, traceback
-import numpy as np, sounddevice as sd, soundfile as sf, pyttsx3, torch
+import sys, os, json
+import pyttsx3, sounddevice as sd
 from PyQt5 import QtCore, QtGui, QtWidgets
+from speech_thread import SpeechThread
+
+CONFIG_FILE = 'tts_bot_config.json'
 
 # Optional dark theme
 try:
     import qdarktheme
-    qdarktheme.setup_theme('auto')
+    qdarktheme.setup_theme('dark')
 except:
     pass
 
-# Optional STT backends
-try:
-    from faster_whisper import WhisperModel
-except:
-    WhisperModel = None
-try:
-    from vosk import Model as VoskModel, KaldiRecognizer
-except:
-    VoskModel = KaldiRecognizer = None
 
-CONFIG_FILE = 'tts_bot_config.json'
 
 def find_loopback():
     for i,d in enumerate(sd.query_devices()):
@@ -211,6 +204,7 @@ class App(QtWidgets.QWidget):
         # Controls
         self.start_btn = QtWidgets.QPushButton('Start')
         self.stop_btn  = QtWidgets.QPushButton('Stop')
+        self.stop_btn.setEnabled(False)
         self.bypass_btn= QtWidgets.QPushButton('Toggle Bypass (Ctrl+B)')
         g.addWidget(self.start_btn,r,0,1,1); g.addWidget(self.stop_btn,r,1,1,1); g.addWidget(self.bypass_btn,r,2,1,2); r+=1
         # Log and export
@@ -222,15 +216,17 @@ class App(QtWidgets.QWidget):
         g.addWidget(self.tts_input,r,1,1,2); g.addWidget(self.speak_btn,r,3,1,1); r+=1
 
     def _populate_voices(self):
+        self.voice_cb.clear()
+        if self.cfg['tts_engine'] != 'pyttsx3':
+            return
         try:
             t = pyttsx3.init()
         except Exception:
-            self.cfg['tts_engine'] = 'espeak'
-            self.tts_cb.setCurrentText('espeak')
             return
         for v in t.getProperty('voices'):
             self.voice_cb.addItem(v.name, v.id)
-        idx = self.voice_cb.findData(self.cfg['tts_voice'])
+        idx = self.voice_cb.findData(self.cfg.get('tts_voice'))
+
         self.voice_cb.setCurrentIndex(max(0, idx))
 
     def _connect_signals(self):
@@ -264,6 +260,8 @@ class App(QtWidgets.QWidget):
         else:
             val = None
         self.cfg[key] = val
+        if key == 'tts_engine':
+            self._populate_voices()
         self._save_config()
 
     def _refresh_devices(self):
