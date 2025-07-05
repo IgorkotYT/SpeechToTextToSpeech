@@ -73,6 +73,7 @@ class SpeechThread(QtCore.QThread):
             self.mode = 'vosk'
         else:
             m, dec, utils = torch.hub.load('snakers4/silero-models', 'silero_stt', language='en')
+
             m.to('cpu')
             self.model = m
             self.decoder = dec
@@ -193,3 +194,4 @@ def speak_once(cfg, text):
     SpeechThread._init_tts(dummy)
     dummy.sox_ok = shutil.which('sox') is not None
     SpeechThread._speak(dummy, text)
+
