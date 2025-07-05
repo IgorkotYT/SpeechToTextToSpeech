@@ -1,5 +1,8 @@
 import sys, os, json, queue, subprocess, tempfile, shutil, time, traceback
 import numpy as np, sounddevice as sd, soundfile as sf, pyttsx3, torch
+import os
+import tempfile
+import zipfile
 from PyQt5 import QtCore
 
 try:
@@ -34,22 +37,61 @@ class SpeechThread(QtCore.QThread):
         self._init_tts()
 
     def _init_stt(self):
-        stt = self.cfg['stt_engine']
-        model_path = self.cfg['model_path']
-        if stt == 'Whisper' and WhisperModel:
-            self.model = WhisperModel('base.en', compute_type='int8')
+        """
+        Initialize the chosen STT engine, with automatic path detection:
+          - WhisperModel: defaults to 'tiny.en' if no path given
+          - VoskModel: unzips .zip, descends into single-subfolder directories
+          - Silero: fallback if neither Whisper nor Vosk loads
+        """
+        stt = self.cfg.get('stt_engine', 'Whisper').lower()
+        model_p = self.cfg.get('model_path', '').strip()
+
+        # --- WHISPER (via faster-whisper) ---
+        if stt == 'whisper' and WhisperModel:
+            model_name = model_p or 'tiny.en'
+            self.model = WhisperModel(model_name, compute_type='int8')
             self.mode = 'whisper'
-        elif stt == 'Vosk' and VoskModel:
-            self.model = KaldiRecognizer(VoskModel(model_path), self.rate)
-            self.model.SetWords(False)
-            self.mode = 'vosk'
-        else:
-            m, dec, utils = torch.hub.load('snakers4/silero-models', 'silero_stt', language='en')
+            return
+
+        # --- VOSK (local model directory or zip) ---
+        if stt == 'vosk' and VoskModel:
+            if model_p.lower().endswith('.zip') and os.path.isfile(model_p):
+                tmp = tempfile.mkdtemp(prefix='vosk_')
+                with zipfile.ZipFile(model_p, 'r') as z:
+                    z.extractall(tmp)
+                model_p = tmp
+
+            if os.path.isdir(model_p):
+                subs = [os.path.join(model_p, d) for d in os.listdir(model_p)
+                        if os.path.isdir(os.path.join(model_p, d))]
+                if len(subs) == 1:
+                    model_p = subs[0]
+
+            if os.path.isdir(model_p):
+                self.model = KaldiRecognizer(VoskModel(model_p), self.rate)
+                self.model.SetWords(False)
+                self.mode = 'vosk'
+                return
+            else:
+                print(f"[WARN] Vosk model not found at: {model_p}")
+
+        # --- SILERO (last-resort fallback) ---
+        try:
+            m, dec, utils = torch.hub.load(
+                'snakers4/silero-models',
+                'silero_stt',
+                language=self.cfg.get('silero_lang', 'en')
+            )
             m.to('cpu')
             self.model = m
             self.decoder = dec
             self.prepare = utils[-1]
             self.mode = 'silero'
+            return
+        except Exception as e:
+            print(f"[ERROR] Silero load failed: {e}")
+
+        raise RuntimeError("No valid STT engine could be initialized.")
 
     def _init_tts(self):
         self.sox_ok = shutil.which('sox') is not None
