@@ -1,14 +1,19 @@
 import sys, os, json, queue, subprocess, tempfile, shutil, time, traceback
 import numpy as np, sounddevice as sd, soundfile as sf, pyttsx3, torch
-import os
-import tempfile
-import zipfile
+axomaa-codex/update-_init_stt-for-model-path-detection
+import zipfile, requests
+from urllib.parse import urlparse
+from pathlib import Path
 from PyQt5 import QtCore
 
 try:
     from faster_whisper import WhisperModel
 except Exception:
     WhisperModel = None
+try:
+    import whisper as openai_whisper
+except Exception:
+    openai_whisper = None
 try:
     from vosk import Model as VoskModel, KaldiRecognizer
 except Exception:
@@ -33,7 +38,9 @@ class SpeechThread(QtCore.QThread):
         self.running = True
         self.buffer = ''
         self.rate = 16000
-        self._init_stt()
+        self.mode = None
+        if not self.cfg.get('typing_only'):
+            self._init_stt()
         self._init_tts()
 
     def _init_stt(self):
@@ -45,13 +52,40 @@ class SpeechThread(QtCore.QThread):
         """
         stt = self.cfg.get('stt_engine', 'Whisper').lower()
         model_p = self.cfg.get('model_path', '').strip()
+        if model_p.startswith(('http://', 'https://')):
+            try:
+                cache = Path(tempfile.gettempdir()) / 'stt_models'
+                cache.mkdir(exist_ok=True)
+                target = cache / os.path.basename(urlparse(model_p).path)
+                if not target.is_file():
+                    with requests.get(model_p, stream=True) as r:
+                        r.raise_for_status()
+                        with open(target, 'wb') as f:
+                            for chunk in r.iter_content(8192):
+                                f.write(chunk)
+                model_p = str(target)
+            except Exception as e:
+                print(f"[WARN] download failed: {e}")
 
-        # --- WHISPER (via faster-whisper) ---
-        if stt == 'whisper' and WhisperModel:
-            model_name = model_p or 'tiny.en'
-            self.model = WhisperModel(model_name, compute_type='int8')
-            self.mode = 'whisper'
-            return
+        # --- WHISPER (via faster-whisper, then openai-whisper) ---
+        if stt == 'whisper':
+            if WhisperModel:
+                try:
+                    model_name = model_p or 'tiny.en'
+                    self.model = WhisperModel(model_name, compute_type='int8')
+                    self.mode = 'whisper'
+                    return
+                except Exception as e:
+                    print(f"[WARN] faster-whisper failed: {e}")
+            if openai_whisper:
+                try:
+                    model_name = model_p or 'base'
+                    self.model = openai_whisper.load_model(model_name)
+                    self.mode = 'openai-whisper'
+                    return
+                except Exception as e:
+                    print(f"[WARN] openai-whisper failed: {e}")
+
 
         # --- VOSK (local model directory or zip) ---
         if stt == 'vosk' and VoskModel:
