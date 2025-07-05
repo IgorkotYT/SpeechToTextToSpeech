@@ -33,7 +33,7 @@ class App(QtWidgets.QWidget):
             'stt_engine':'Whisper','model_path':'model','stt_gain':1.0,
             'tts_engine':'espeak','tts_voice':'','tts_vol':100,
             'words_chunk':5,'chunk_ms':500,'pitch':0,'tempo':1,'filter':'none',
-            'bypass':False
+            'bypass':False,'typing_only':False
         }
 
     def _save_config(self):
@@ -56,6 +56,9 @@ class App(QtWidgets.QWidget):
         self.tts_cb.setCurrentText(self.cfg['tts_engine']);
         g.addWidget(self.tts_cb,r,1);
         g.addWidget(QtWidgets.QLabel('TTS Voice:'),r,2); self.voice_cb=QtWidgets.QComboBox(); g.addWidget(self.voice_cb,r,3); r+=1
+        self.typing_chk = QtWidgets.QCheckBox('Typing only (TTS only)');
+        self.typing_chk.setChecked(self.cfg.get('typing_only', False));
+        g.addWidget(self.typing_chk,r,0,1,2); r+=1
         # Sliders
         def add_slider(label, attr, row):
             g.addWidget(QtWidgets.QLabel(label), row, 0)
@@ -144,7 +147,7 @@ class App(QtWidgets.QWidget):
                     (self.tts_cb,'tts_engine'),(self.voice_cb,'tts_voice'),(self.gain_sl,'stt_gain'),
                     (self.vol_sl,'tts_vol'),(self.words_sl,'words_chunk'),(self.chunk_sl,'chunk_ms'),
                     (self.pitch_sl,'pitch'),(self.tempo_sl,'tempo'),(self.filter_cb,'filter'),
-                    (self.in_cb,'in_dev'),(self.out_cb,'out_dev') ]
+                    (self.typing_chk,'typing_only'),(self.in_cb,'in_dev'),(self.out_cb,'out_dev') ]
         for w,key in widgets:
             sig = w.currentIndexChanged if isinstance(w,QtWidgets.QComboBox) else w.valueChanged if isinstance(w,QtWidgets.QSlider) else w.stateChanged if isinstance(w,QtWidgets.QCheckBox) else w.editingFinished
             sig.connect(lambda _,k=key,w=w: self._update_cfg(k,w))
@@ -194,18 +197,22 @@ class App(QtWidgets.QWidget):
         if self.thread is not None:
             return
         self.thread = SpeechThread(self.cfg.copy())
-        self.thread.new_text.connect(self._on_new_text)
-        self.thread.level.connect(self.level_pb.setValue)
-        self.thread.latency.connect(self._on_latency)
-        self.thread.start()
+        if not self.cfg.get('typing_only'):
+            self.thread.new_text.connect(self._on_new_text)
+            self.thread.level.connect(self.level_pb.setValue)
+            self.thread.latency.connect(self._on_latency)
+            self.thread.start()
+        else:
+            self._append_log('[Typing only mode]')
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
     def _stop(self):
         if not self.thread:
             return
-        self.thread.running = False
-        self.thread.wait()
+        if not self.cfg.get('typing_only'):
+            self.thread.running = False
+            self.thread.wait()
         self.thread = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -218,7 +225,12 @@ class App(QtWidgets.QWidget):
     def _speak_manual(self):
         txt = self.tts_input.text().strip()
         if txt:
-            self.thread._speak(txt) if self.thread else SpeechThread(self.cfg)._speak(txt)
+            if self.thread:
+                self.thread._speak(txt)
+            else:
+                cfg = self.cfg.copy()
+                cfg['typing_only'] = True
+                SpeechThread(cfg)._speak(txt)
 
     def _on_new_text(self, text):
         self._append_log(text)
