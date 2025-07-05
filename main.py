@@ -16,7 +16,6 @@ except:
     pass
 
 
-
 # GUI ---------------------------------------------------------------------------
 class App(QtWidgets.QWidget):
     def __init__(self):
@@ -38,7 +37,7 @@ class App(QtWidgets.QWidget):
             'stt_engine':'Whisper','model_path':'','stt_gain':1.0,
             'tts_engine':'pyttsx3','tts_voice':'','tts_vol':100,
             'words_chunk':5,'chunk_ms':500,'pitch':0,'tempo':1,'filter':'none',
-            'bypass':False
+            'bypass':False,'typing_only':False
         }
 
     def _save_config(self):
@@ -62,6 +61,9 @@ class App(QtWidgets.QWidget):
         self.tts_cb.setCurrentText(self.cfg['tts_engine']);
         g.addWidget(self.tts_cb,r,1);
         g.addWidget(QtWidgets.QLabel('TTS Voice:'),r,2); self.voice_cb=QtWidgets.QComboBox(); g.addWidget(self.voice_cb,r,3); r+=1
+        self.typing_chk = QtWidgets.QCheckBox('Typing only (TTS only)');
+        self.typing_chk.setChecked(self.cfg.get('typing_only', False));
+        g.addWidget(self.typing_chk,r,0,1,2); r+=1
         # Sliders
         def add_slider(label, attr, row):
             g.addWidget(QtWidgets.QLabel(label), row, 0)
