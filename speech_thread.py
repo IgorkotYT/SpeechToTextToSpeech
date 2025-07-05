@@ -73,7 +73,6 @@ class SpeechThread(QtCore.QThread):
             self.mode = 'vosk'
         else:
             m, dec, utils = torch.hub.load('snakers4/silero-models', 'silero_stt', language='en')
-
             m.to('cpu')
             self.model = m
             self.decoder = dec
@@ -81,21 +80,29 @@ class SpeechThread(QtCore.QThread):
             self.mode = 'silero'
 
     def _init_tts(self):
+        """Initialize TTS engine with graceful fallback."""
         self.sox_ok = shutil.which('sox') is not None
-        eng = self.cfg['tts_engine']
+        eng = self.cfg.get('tts_engine', 'pyttsx3')
+
         if eng == 'pyttsx3':
+            # comtypes tries to generate wrappers in site-packages which can
+            # fail without admin rights. Use a writable cache directory.
+            if 'COMTYPES_CACHE' not in os.environ:
+                os.environ['COMTYPES_CACHE'] = os.path.join(tempfile.gettempdir(), 'comtypes_cache')
             try:
                 self.tts = pyttsx3.init()
             except Exception:
-                self.cfg['tts_engine'] = 'espeak'
-                return self._init_tts()
-            self.tts.setProperty('rate', 180)
-            self.tts.setProperty('volume', self.cfg['tts_vol'] / 100)
-            if self.cfg['tts_voice']:
-                self.tts.setProperty('voice', self.cfg['tts_voice'])
-        elif shutil.which(eng) is None:
-            self.cfg['tts_engine'] = 'pyttsx3'
-            self._init_tts()
+                eng = 'espeak'
+            else:
+                self.tts.setProperty('rate', 180)
+                self.tts.setProperty('volume', self.cfg.get('tts_vol', 100) / 100)
+                if self.cfg.get('tts_voice'):
+                    self.tts.setProperty('voice', self.cfg['tts_voice'])
+
+        if eng in ('espeak', 'sam') and shutil.which(eng) is None:
+            eng = 'espeak' if shutil.which('espeak') else 'sam'
+
+        self.cfg['tts_engine'] = eng
 
     def run(self):
         q = queue.Queue()
@@ -194,4 +201,3 @@ def speak_once(cfg, text):
     SpeechThread._init_tts(dummy)
     dummy.sox_ok = shutil.which('sox') is not None
     SpeechThread._speak(dummy, text)
-

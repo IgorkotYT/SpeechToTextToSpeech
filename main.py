@@ -1,7 +1,7 @@
 # TTS-Only Bot – Full Featured GUI (Dark Theme)
 # Whisper / Vosk / Silero STT, pyttsx3/espeak/sam TTS, SoX FX, config, export, bypass
 
-import sys, os, json, subprocess
+import sys, os, json, subprocess, tempfile
 import pyttsx3, sounddevice as sd
 from PyQt5 import QtCore, QtGui, QtWidgets
 from speech_thread import SpeechThread, speak_once
@@ -135,6 +135,8 @@ class App(QtWidgets.QWidget):
         self.voice_cb.clear()
         eng = self.cfg['tts_engine']
         if eng == 'pyttsx3':
+            if 'COMTYPES_CACHE' not in os.environ:
+                os.environ['COMTYPES_CACHE'] = os.path.join(tempfile.gettempdir(), 'comtypes_cache')
             try:
                 t = pyttsx3.init()
             except Exception:
