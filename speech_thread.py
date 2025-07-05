@@ -1,5 +1,6 @@
 import sys, os, json, queue, subprocess, tempfile, shutil, time, traceback
 import numpy as np, sounddevice as sd, soundfile as sf, pyttsx3, torch
+axomaa-codex/update-_init_stt-for-model-path-detection
 import zipfile, requests
 from urllib.parse import urlparse
 from pathlib import Path
@@ -84,6 +85,7 @@ class SpeechThread(QtCore.QThread):
                     return
                 except Exception as e:
                     print(f"[WARN] openai-whisper failed: {e}")
+
 
         # --- VOSK (local model directory or zip) ---
         if stt == 'vosk' and VoskModel:
