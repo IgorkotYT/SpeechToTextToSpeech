@@ -89,8 +89,9 @@ class SpeechThread(QtCore.QThread):
             # fail without admin rights. Use a writable cache directory.
             if 'COMTYPES_CACHE' not in os.environ:
                 os.environ['COMTYPES_CACHE'] = os.path.join(tempfile.gettempdir(), 'comtypes_cache')
+            os.makedirs(os.environ['COMTYPES_CACHE'], exist_ok=True)
             try:
-                self.tts = pyttsx3.init()
+                self.tts = pyttsx3.init('sapi5')
             except Exception:
                 eng = 'espeak'
             else:

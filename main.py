@@ -105,20 +105,29 @@ class App(QtWidgets.QWidget):
         g.addWidget(self.tts_input,r,1,1,2); g.addWidget(self.speak_btn,r,3,1,1); r+=1
 
     def _search_models(self):
-        bases = ['.', 'models', 'model', os.path.expanduser('~/models'), '/usr/share/vosk']
-        dirs = []
+        """Return a list of possible STT model directories."""
+        bases = [
+            '.', 'models', 'model', os.path.expanduser('~/models'), '/usr/share/vosk'
+        ]
+        found = []
         for base in bases:
             if not os.path.isdir(base):
                 continue
-            if 'model' in os.path.basename(base).lower() or 'vosk' in base.lower():
-                dirs.append(os.path.abspath(base))
-            for d in os.listdir(base):
-                if d.startswith('.') or d.startswith('__'):
+            for root, dirs, _ in os.walk(base):
+                depth = root[len(base):].count(os.sep)
+                if depth > 2:
+                    dirs[:] = []
                     continue
-                p = os.path.join(base, d)
-                if os.path.isdir(p) and ('model' in d.lower() or 'vosk' in d.lower()):
-                    dirs.append(os.path.abspath(p))
-        return sorted(set(dirs))
+                if (
+                    'model' in os.path.basename(root).lower()
+                    or 'vosk' in root.lower()
+                    or 'whisper' in root.lower()
+                ):
+                    found.append(os.path.abspath(root))
+                for d in list(dirs):
+                    if d.startswith('.') or d.startswith('__'):
+                        dirs.remove(d)
+        return sorted(set(found))
 
     def _populate_model_paths(self):
         self.model_cb.clear()
@@ -137,9 +146,12 @@ class App(QtWidgets.QWidget):
         if eng == 'pyttsx3':
             if 'COMTYPES_CACHE' not in os.environ:
                 os.environ['COMTYPES_CACHE'] = os.path.join(tempfile.gettempdir(), 'comtypes_cache')
+            os.makedirs(os.environ['COMTYPES_CACHE'], exist_ok=True)
             try:
-                t = pyttsx3.init()
+                t = pyttsx3.init('sapi5')
             except Exception:
+                self.voice_cb.addItem('Default', None)
+                self.cfg['tts_voice'] = None
                 return
             default_id = t.getProperty('voice')
             for v in t.getProperty('voices'):
