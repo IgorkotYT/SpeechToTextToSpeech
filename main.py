@@ -1,10 +1,10 @@
 # TTS-Only Bot – Full Featured GUI (Dark Theme)
 # Whisper / Vosk / Silero STT, pyttsx3/espeak/sam TTS, SoX FX, config, export, bypass
 
-import sys, os, json
+import sys, os, json, subprocess
 import pyttsx3, sounddevice as sd
 from PyQt5 import QtCore, QtGui, QtWidgets
-from speech_thread import SpeechThread
+from speech_thread import SpeechThread, speak_once
 
 CONFIG_FILE = 'tts_bot_config.json'
 
@@ -23,6 +23,10 @@ class App(QtWidgets.QWidget):
         self.cfg=self._load_config(); self.thread=None
         self._build_ui(); self._populate_model_paths(); self._populate_voices(); self._connect_signals()
         self._refresh_devices()
+        self.loop_chk.setChecked(self.cfg.get('listen_self', False))
+        self.stt_cb.setCurrentText(self.cfg.get('stt_engine', 'Whisper'))
+        if self.cfg.get('bypass'):
+            self.bypass_btn.setText('Bypass ON')
 
     def _load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -30,8 +34,8 @@ class App(QtWidgets.QWidget):
             except: pass
         return {
             'in_dev':None,'out_dev':None,'listen_self':False,
-            'stt_engine':'Whisper','model_path':'model','stt_gain':1.0,
-            'tts_engine':'espeak','tts_voice':'','tts_vol':100,
+            'stt_engine':'Whisper','model_path':'','stt_gain':1.0,
+            'tts_engine':'pyttsx3','tts_voice':'','tts_vol':100,
             'words_chunk':5,'chunk_ms':500,'pitch':0,'tempo':1,'filter':'none',
             'bypass':False,'typing_only':False
         }
@@ -47,9 +51,10 @@ class App(QtWidgets.QWidget):
         g.addWidget(QtWidgets.QLabel('Output device:'),r,0); self.out_cb=QtWidgets.QComboBox(); g.addWidget(self.out_cb,r,1,1,3); r+=1
         self.loop_chk=QtWidgets.QCheckBox('Listen to self (loopback)'); g.addWidget(self.loop_chk,r,0,1,2); r+=1
         # STT/TTS
-        g.addWidget(QtWidgets.QLabel('STT Engine:'),r,0); self.stt_cb=QtWidgets.QComboBox(); self.stt_cb.addItems(['Whisper','Vosk','Silero']); g.addWidget(self.stt_cb,r,1);
+        g.addWidget(QtWidgets.QLabel('STT Engine:'),r,0); self.stt_cb=QtWidgets.QComboBox();
+        self.stt_cb.addItems(['Whisper','Fast Whisper','Vosk','Silero']);
+        g.addWidget(self.stt_cb,r,1);
         g.addWidget(QtWidgets.QLabel('Model path:'),r,2); self.model_cb=QtWidgets.QComboBox(); self.model_cb.setEditable(True); g.addWidget(self.model_cb,r,3); r+=1
-
         g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0);
         self.tts_cb=QtWidgets.QComboBox();
         self.tts_cb.addItems(['pyttsx3','espeak','sam']);
@@ -100,13 +105,18 @@ class App(QtWidgets.QWidget):
         g.addWidget(self.tts_input,r,1,1,2); g.addWidget(self.speak_btn,r,3,1,1); r+=1
 
     def _search_models(self):
+        bases = ['.', 'models', 'model', os.path.expanduser('~/models'), '/usr/share/vosk']
         dirs = []
-        for base in ('.', 'models', 'model'):
+        for base in bases:
             if not os.path.isdir(base):
                 continue
+            if 'model' in os.path.basename(base).lower() or 'vosk' in base.lower():
+                dirs.append(os.path.abspath(base))
             for d in os.listdir(base):
+                if d.startswith('.') or d.startswith('__'):
+                    continue
                 p = os.path.join(base, d)
-                if os.path.isdir(p):
+                if os.path.isdir(p) and ('model' in d.lower() or 'vosk' in d.lower()):
                     dirs.append(os.path.abspath(p))
         return sorted(set(dirs))
 
@@ -114,27 +124,42 @@ class App(QtWidgets.QWidget):
         self.model_cb.clear()
         paths = self._search_models()
         self.model_cb.addItems(paths)
-        if self.cfg['model_path'] and self.cfg['model_path'] not in paths:
+        if not self.cfg.get('model_path') and paths:
+            self.cfg['model_path'] = paths[0]
+        elif self.cfg.get('model_path') and self.cfg['model_path'] not in paths:
             self.model_cb.addItem(self.cfg['model_path'])
-        self.model_cb.setCurrentText(self.cfg['model_path'])
+        self.model_cb.setCurrentText(self.cfg.get('model_path', ''))
+        self._save_config()
 
     def _populate_voices(self):
         self.voice_cb.clear()
-        if self.cfg['tts_engine'] != 'pyttsx3':
-            return
-        try:
-            t = pyttsx3.init()
-        except Exception:
-            return
-        default_id = t.getProperty('voice')
-        for v in t.getProperty('voices'):
-            self.voice_cb.addItem(v.name, v.id)
-        target = self.cfg.get('tts_voice') or default_id
-        idx = self.voice_cb.findData(target)
-        if idx < 0:
-            idx = self.voice_cb.findData(default_id)
-        self.voice_cb.setCurrentIndex(max(0, idx))
-        self.cfg['tts_voice'] = self.voice_cb.currentData()
+        eng = self.cfg['tts_engine']
+        if eng == 'pyttsx3':
+            try:
+                t = pyttsx3.init()
+            except Exception:
+                return
+            default_id = t.getProperty('voice')
+            for v in t.getProperty('voices'):
+                self.voice_cb.addItem(v.name, v.id)
+            target = self.cfg.get('tts_voice') or default_id
+            idx = self.voice_cb.findData(target)
+            if idx < 0:
+                idx = self.voice_cb.findData(default_id)
+            self.voice_cb.setCurrentIndex(max(0, idx))
+            self.cfg['tts_voice'] = self.voice_cb.currentData()
+        elif eng == 'espeak':
+            try:
+                out = subprocess.check_output(['espeak', '--voices'], encoding='utf8', errors='ignore')
+                for line in out.splitlines()[1:]:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        self.voice_cb.addItem(parts[3])
+            except Exception:
+                pass
+            idx = self.voice_cb.findText(self.cfg.get('tts_voice',''))
+            self.voice_cb.setCurrentIndex(max(0, idx))
+            self.cfg['tts_voice'] = self.voice_cb.currentText()
 
     def _connect_signals(self):
         QtWidgets.QShortcut(QtGui.QKeySequence('Ctrl+B'), self).activated.connect(self._toggle_bypass)
@@ -147,7 +172,7 @@ class App(QtWidgets.QWidget):
                     (self.tts_cb,'tts_engine'),(self.voice_cb,'tts_voice'),(self.gain_sl,'stt_gain'),
                     (self.vol_sl,'tts_vol'),(self.words_sl,'words_chunk'),(self.chunk_sl,'chunk_ms'),
                     (self.pitch_sl,'pitch'),(self.tempo_sl,'tempo'),(self.filter_cb,'filter'),
-                    (self.typing_chk,'typing_only'),(self.in_cb,'in_dev'),(self.out_cb,'out_dev') ]
+                    (self.in_cb,'in_dev'),(self.out_cb,'out_dev') ]
         for w,key in widgets:
             sig = w.currentIndexChanged if isinstance(w,QtWidgets.QComboBox) else w.valueChanged if isinstance(w,QtWidgets.QSlider) else w.stateChanged if isinstance(w,QtWidgets.QCheckBox) else w.editingFinished
             sig.connect(lambda _,k=key,w=w: self._update_cfg(k,w))
@@ -197,22 +222,18 @@ class App(QtWidgets.QWidget):
         if self.thread is not None:
             return
         self.thread = SpeechThread(self.cfg.copy())
-        if not self.cfg.get('typing_only'):
-            self.thread.new_text.connect(self._on_new_text)
-            self.thread.level.connect(self.level_pb.setValue)
-            self.thread.latency.connect(self._on_latency)
-            self.thread.start()
-        else:
-            self._append_log('[Typing only mode]')
+        self.thread.new_text.connect(self._on_new_text)
+        self.thread.level.connect(self.level_pb.setValue)
+        self.thread.latency.connect(self._on_latency)
+        self.thread.start()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
 
     def _stop(self):
         if not self.thread:
             return
-        if not self.cfg.get('typing_only'):
-            self.thread.running = False
-            self.thread.wait()
+        self.thread.running = False
+        self.thread.wait()
         self.thread = None
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -228,9 +249,7 @@ class App(QtWidgets.QWidget):
             if self.thread:
                 self.thread._speak(txt)
             else:
-                cfg = self.cfg.copy()
-                cfg['typing_only'] = True
-                SpeechThread(cfg)._speak(txt)
+                speak_once(self.cfg.copy(), txt)
 
     def _on_new_text(self, text):
         self._append_log(text)
