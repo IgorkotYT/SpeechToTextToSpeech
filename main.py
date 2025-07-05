@@ -15,7 +15,6 @@ try:
 except:
     pass
 
-
 # GUI ---------------------------------------------------------------------------
 class App(QtWidgets.QWidget):
     def __init__(self):
@@ -23,6 +22,10 @@ class App(QtWidgets.QWidget):
         self.cfg=self._load_config(); self.thread=None
         self._build_ui(); self._populate_model_paths(); self._populate_voices(); self._connect_signals()
         self._refresh_devices()
+        self.loop_chk.setChecked(self.cfg.get('listen_self', False))
+        self.stt_cb.setCurrentText(self.cfg.get('stt_engine', 'Whisper'))
+        if self.cfg.get('bypass'):
+            self.bypass_btn.setText('Bypass ON')
 
     def _load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -49,7 +52,6 @@ class App(QtWidgets.QWidget):
         # STT/TTS
         g.addWidget(QtWidgets.QLabel('STT Engine:'),r,0); self.stt_cb=QtWidgets.QComboBox(); self.stt_cb.addItems(['Whisper','Vosk','Silero']); g.addWidget(self.stt_cb,r,1);
         g.addWidget(QtWidgets.QLabel('Model path:'),r,2); self.model_cb=QtWidgets.QComboBox(); self.model_cb.setEditable(True); g.addWidget(self.model_cb,r,3); r+=1
-
         g.addWidget(QtWidgets.QLabel('TTS Engine:'),r,0);
         self.tts_cb=QtWidgets.QComboBox();
         self.tts_cb.addItems(['pyttsx3','espeak','sam']);
@@ -105,6 +107,9 @@ class App(QtWidgets.QWidget):
             if not os.path.isdir(base):
                 continue
             for d in os.listdir(base):
+                if d.startswith('.') or d.startswith('__'):
+                    continue
+
                 p = os.path.join(base, d)
                 if os.path.isdir(p):
                     dirs.append(os.path.abspath(p))
