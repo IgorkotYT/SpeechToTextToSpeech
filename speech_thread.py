@@ -126,7 +126,10 @@ class SpeechThread(QtCore.QThread):
             s.start()
         try:
             while self.running:
-                audio = np.squeeze(q.get()) * self.cfg['stt_gain']
+                try:
+                    audio = np.squeeze(q.get(timeout=0.1)) * self.cfg['stt_gain']
+                except queue.Empty:
+                    continue
                 self.level.emit(int(np.abs(audio).max() * 100))
                 if self.cfg['bypass'] and out_stream:
                     out_stream.write(audio)
