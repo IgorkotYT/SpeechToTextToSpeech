@@ -1,5 +1,9 @@
 import sys, os, json, queue, subprocess, tempfile, shutil, time, traceback
 import numpy as np, sounddevice as sd, soundfile as sf, pyttsx3, torch
+try:
+    import whisper as openai_whisper
+except Exception:
+    openai_whisper = None
 from PyQt5 import QtCore
 
 try:
@@ -10,6 +14,20 @@ try:
     from vosk import Model as VoskModel, KaldiRecognizer
 except Exception:
     VoskModel = KaldiRecognizer = None
+
+def find_vosk_model():
+    """Return path to a Vosk model if one exists in common locations."""
+    bases = ['.', 'models', 'model', os.path.expanduser('~/models'), '/usr/share/vosk']
+    for base in bases:
+        if not os.path.isdir(base):
+            continue
+        if 'vosk' in os.path.basename(base).lower():
+            return os.path.abspath(base)
+        for d in os.listdir(base):
+            p = os.path.join(base, d)
+            if os.path.isdir(p) and 'vosk' in d.lower():
+                return os.path.abspath(p)
+    return None
 
 
 def find_loopback():
@@ -35,11 +53,21 @@ class SpeechThread(QtCore.QThread):
 
     def _init_stt(self):
         stt = self.cfg['stt_engine']
-        model_path = self.cfg['model_path']
-        if stt == 'Whisper' and WhisperModel:
+        model_path = self.cfg.get('model_path')
+        if stt == 'Fast Whisper' and WhisperModel:
             self.model = WhisperModel('base.en', compute_type='int8')
-            self.mode = 'whisper'
+            self.mode = 'fast'
+        elif stt == 'Whisper' and openai_whisper:
+            self.model = openai_whisper.load_model('base')
+            self.mode = 'openai'
         elif stt == 'Vosk' and VoskModel:
+            if not model_path or not os.path.isdir(model_path):
+                mp = find_vosk_model()
+                if mp:
+                    model_path = mp
+                    self.cfg['model_path'] = mp
+                else:
+                    raise RuntimeError('Vosk model not found')
             self.model = KaldiRecognizer(VoskModel(model_path), self.rate)
             self.model.SetWords(False)
             self.mode = 'vosk'
@@ -52,21 +80,30 @@ class SpeechThread(QtCore.QThread):
             self.mode = 'silero'
 
     def _init_tts(self):
+        """Initialize TTS engine with graceful fallback."""
         self.sox_ok = shutil.which('sox') is not None
-        eng = self.cfg['tts_engine']
+        eng = self.cfg.get('tts_engine', 'pyttsx3')
+
         if eng == 'pyttsx3':
+            # comtypes tries to generate wrappers in site-packages which can
+            # fail without admin rights. Use a writable cache directory.
+            if 'COMTYPES_CACHE' not in os.environ:
+                os.environ['COMTYPES_CACHE'] = os.path.join(tempfile.gettempdir(), 'comtypes_cache')
+            os.makedirs(os.environ['COMTYPES_CACHE'], exist_ok=True)
             try:
-                self.tts = pyttsx3.init()
+                self.tts = pyttsx3.init('sapi5')
             except Exception:
-                self.cfg['tts_engine'] = 'espeak'
-                return self._init_tts()
-            self.tts.setProperty('rate', 180)
-            self.tts.setProperty('volume', self.cfg['tts_vol'] / 100)
-            if self.cfg['tts_voice']:
-                self.tts.setProperty('voice', self.cfg['tts_voice'])
-        elif shutil.which(eng) is None:
-            self.cfg['tts_engine'] = 'pyttsx3'
-            self._init_tts()
+                eng = 'espeak'
+            else:
+                self.tts.setProperty('rate', 180)
+                self.tts.setProperty('volume', self.cfg.get('tts_vol', 100) / 100)
+                if self.cfg.get('tts_voice'):
+                    self.tts.setProperty('voice', self.cfg['tts_voice'])
+
+        if eng in ('espeak', 'sam') and shutil.which(eng) is None:
+            eng = 'espeak' if shutil.which('espeak') else 'sam'
+
+        self.cfg['tts_engine'] = eng
 
     def run(self):
         q = queue.Queue()
@@ -96,9 +133,12 @@ class SpeechThread(QtCore.QThread):
                     continue
                 t0 = time.time()
                 txt = ''
-                if self.mode == 'whisper':
+                if self.mode == 'fast':
                     segs, _ = self.model.transcribe(audio, language='en', beam_size=1)
                     txt = ' '.join(s.text for s in segs)
+                elif self.mode == 'openai':
+                    res = self.model.transcribe(audio, language='en')
+                    txt = res.get('text','').strip()
                 elif self.mode == 'vosk':
                     if self.model.AcceptWaveform(audio.tobytes()):
                         txt = json.loads(self.model.Result()).get('text', '')
@@ -152,3 +192,13 @@ class SpeechThread(QtCore.QThread):
                 os.unlink(f)
             except Exception:
                 pass
+
+
+def speak_once(cfg, text):
+    """Speak text once without creating a running thread."""
+    dummy = type('dummy', (), {})()
+    dummy.cfg = cfg
+    # reuse SpeechThread methods
+    SpeechThread._init_tts(dummy)
+    dummy.sox_ok = shutil.which('sox') is not None
+    SpeechThread._speak(dummy, text)
