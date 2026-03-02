@@ -110,6 +110,19 @@ def test_speak_once_sox_fx(mock_whisper, mock_wait, mock_play, mock_read, mock_r
     assert 'pitch' in sox_call
     assert '100' in sox_call
 
+@patch('speech_thread.subprocess.run')
+@patch('speech_thread.openai_whisper.load_model')
+def test_speak_once_missing_engine(mock_whisper, mock_run, default_cfg):
+    default_cfg['tts_engine'] = 'sam'
+    mock_run.side_effect = FileNotFoundError("No such file or directory: 'sam'")
+
+    with patch('speech_thread.shutil.which', return_value=None):
+        speak_once(default_cfg, "hello world")
+
+    # The speak_once method prints to stdout if no new_text signal is available
+    # But since it falls back to 'none' in _init_tts if missing, it shouldn't even call run
+    assert not mock_run.called
+
 @patch('speech_thread.openai_whisper.load_model')
 def test_find_vosk_model(mock_whisper):
     with tempfile.TemporaryDirectory() as temp_dir:
