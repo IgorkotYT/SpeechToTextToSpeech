@@ -179,6 +179,7 @@ class App(QtWidgets.QWidget):
         QtWidgets.QShortcut(QtGui.QKeySequence('Ctrl+B'), self).activated.connect(self._toggle_bypass)
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
+        self.bypass_btn.clicked.connect(self._toggle_bypass)
         self.export_btn.clicked.connect(self._export)
         self.speak_btn.clicked.connect(self._speak_manual)
         # track config changes
