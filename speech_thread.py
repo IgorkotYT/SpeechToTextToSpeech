@@ -100,8 +100,14 @@ class SpeechThread(QtCore.QThread):
                 if self.cfg.get('tts_voice'):
                     self.tts.setProperty('voice', self.cfg['tts_voice'])
 
-        if eng in ('espeak', 'sam') and shutil.which(eng) is None:
-            eng = 'espeak' if shutil.which('espeak') else 'sam'
+        if eng in ('espeak', 'sam'):
+            if shutil.which(eng) is None:
+                if shutil.which('espeak') is not None:
+                    eng = 'espeak'
+                elif shutil.which('sam') is not None:
+                    eng = 'sam'
+                else:
+                    eng = 'none'
 
         self.cfg['tts_engine'] = eng
 
@@ -173,12 +179,42 @@ class SpeechThread(QtCore.QThread):
 
     def _speak(self, text):
         eng = self.cfg['tts_engine']
-        if eng == 'pyttsx3':
-            self.tts.say(text)
-            self.tts.runAndWait()
+        if eng == 'none':
+            if hasattr(self, 'new_text'):
+                self.new_text.emit(f"[TTS Error] No valid TTS engine found. Text: {text}")
+            else:
+                print(f"[TTS Error] No valid TTS engine found. Text: {text}")
             return
+
+        if eng == 'pyttsx3':
+            try:
+                self.tts.say(text)
+                self.tts.runAndWait()
+            except Exception as e:
+                if hasattr(self, 'new_text'):
+                    self.new_text.emit(f"[TTS Error] pyttsx3 failed: {e}")
+                else:
+                    print(f"[TTS Error] pyttsx3 failed: {e}")
+            return
+
         fd, wav = tempfile.mkstemp('.wav'); os.close(fd)
-        subprocess.run([eng, '-w', wav, text], check=True)
+        try:
+            subprocess.run([eng, '-w', wav, text], check=True)
+        except FileNotFoundError:
+            if hasattr(self, 'new_text'):
+                self.new_text.emit(f"[TTS Error] TTS engine executable '{eng}' not found.")
+            else:
+                print(f"[TTS Error] TTS engine executable '{eng}' not found.")
+            os.unlink(wav)
+            return
+        except subprocess.CalledProcessError as e:
+            if hasattr(self, 'new_text'):
+                self.new_text.emit(f"[TTS Error] TTS engine '{eng}' failed: {e}")
+            else:
+                print(f"[TTS Error] TTS engine '{eng}' failed: {e}")
+            os.unlink(wav)
+            return
+
         out = wav
         if self.sox_ok and (self.cfg['pitch'] or self.cfg['tempo'] != 1 or self.cfg['filter'] != 'none'):
             fx = wav.replace('.wav', '_fx.wav'); cmd = ['sox', wav, fx]

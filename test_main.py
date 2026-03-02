@@ -94,6 +94,17 @@ def test_app_start_stop(qtbot, temp_config_file, mock_speech_thread):
     assert window.stop_btn.isEnabled() is False
     window.close()
 
+def test_app_start_fail_gracefully(qtbot, temp_config_file, mock_speech_thread):
+    window = App()
+    qtbot.addWidget(window)
+    mock_speech_thread.side_effect = Exception("Model not found")
+
+    qtbot.mouseClick(window.start_btn, QtCore.Qt.LeftButton)
+    assert window.thread is None
+    assert window.start_btn.isEnabled() is True
+    assert "[Error starting STT/TTS thread]: Model not found" in window.log_te.toPlainText()
+    window.close()
+
 def test_app_toggle_bypass(qtbot, temp_config_file):
     window = App()
     qtbot.addWidget(window)

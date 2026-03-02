@@ -236,13 +236,17 @@ class App(QtWidgets.QWidget):
     def _start(self):
         if self.thread is not None:
             return
-        self.thread = SpeechThread(self.cfg.copy())
-        self.thread.new_text.connect(self._on_new_text)
-        self.thread.level.connect(self.level_pb.setValue)
-        self.thread.latency.connect(self._on_latency)
-        self.thread.start()
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        try:
+            self.thread = SpeechThread(self.cfg.copy())
+            self.thread.new_text.connect(self._on_new_text)
+            self.thread.level.connect(self.level_pb.setValue)
+            self.thread.latency.connect(self._on_latency)
+            self.thread.start()
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+        except Exception as e:
+            self._append_log(f"[Error starting STT/TTS thread]: {e}")
+            self.thread = None
 
     def _stop(self):
         if not self.thread:
